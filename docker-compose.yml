@@ -18,7 +18,6 @@ services:
       - "9080:9080/tcp"
     environment:
       TZ: Asia/Shanghai
-      RULES_UPDATE_MODE: cdn
       RULES_UPDATE_CRON: "0 3 * * *"
       # GITHUB_TOKEN: ""
     volumes:

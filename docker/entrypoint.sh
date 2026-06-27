@@ -13,7 +13,9 @@ set -euo pipefail
 : "${RULES_UPDATE_INTERVAL:=86400}"
 : "${RULES_UPDATE_TIME:=}"
 : "${RULES_UPDATE_CRON:=}"
-: "${RULES_UPDATE_MODE:=direct}"
+: "${RULES_UPDATE_MODE:=cdn}"
+: "${BOOTSTRAP_DOWNLOAD_MODE:=cdn}"
+: "${BOOTSTRAP_CDN_PREFIX:=https://ghproxy.net/}"
 : "${RULES_UPDATE_ON_START:=true}"
 : "${FORCE_PERSISTENT_WORKDIR:=true}"
 : "${INIT_MARKER_FILE:=.easymosdns-initialized}"
@@ -226,16 +228,47 @@ release_api_url() {
   fi
 }
 
+bootstrap_download_url() {
+  local url=$1
+  case "${BOOTSTRAP_DOWNLOAD_MODE}" in
+    direct)
+      printf '%s\n' "${url}"
+      ;;
+    cdn)
+      case "${url}" in
+        https://github.com/*|https://raw.githubusercontent.com/*)
+          printf '%s%s\n' "${BOOTSTRAP_CDN_PREFIX}" "${url}"
+          ;;
+        *)
+          printf '%s\n' "${url}"
+          ;;
+      esac
+      ;;
+    *)
+      log "invalid BOOTSTRAP_DOWNLOAD_MODE=${BOOTSTRAP_DOWNLOAD_MODE}, expected direct/cdn"
+      exit 1
+      ;;
+  esac
+}
+
+release_archive_url() {
+  local repo=$1
+  local tag=$2
+  printf 'https://github.com/%s/archive/refs/tags/%s.tar.gz\n' "${repo}" "${tag}"
+}
+
 download_file() {
   local url=$1
   local dest=$2
+  local final_url
+  final_url="$(bootstrap_download_url "${url}")"
   if [[ -n "${GITHUB_TOKEN}" ]]; then
     curl -fsSL \
       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       -o "${dest}" \
-      "${url}"
+      "${final_url}"
   else
-    curl -fsSL -o "${dest}" "${url}"
+    curl -fsSL -o "${dest}" "${final_url}"
   fi
 }
 
@@ -273,7 +306,7 @@ install_mosdns_x() {
   tmp_extract="${tmp_dir}/extract"
   mkdir -p "${tmp_extract}"
 
-  log "downloading ${MOSDNS_X_REPO} ${MOSDNS_X_REF} (${asset_name})"
+  log "downloading ${MOSDNS_X_REPO} ${MOSDNS_X_REF} (${asset_name}) via ${BOOTSTRAP_DOWNLOAD_MODE}"
   download_file "${asset_url}" "${tmp_zip}"
   unzip -q "${tmp_zip}" -d "${tmp_extract}"
 
@@ -283,19 +316,20 @@ install_mosdns_x() {
 }
 
 sync_easymosdns() {
-  local release_json tarball_url tmp_dir src_dir extracted_root
+  local release_json tag_name tarball_url tmp_dir src_dir extracted_root
   release_json="$(api_get "$(release_api_url "${EASYMOSDNS_REPO}" "${EASYMOSDNS_REF}")")"
-  tarball_url="$(jq -r '.tarball_url' <<< "${release_json}")"
-  if [[ -z "${tarball_url}" || "${tarball_url}" == "null" ]]; then
-    log "failed to resolve easymosdns tarball url"
+  tag_name="$(jq -r '.tag_name' <<< "${release_json}")"
+  if [[ -z "${tag_name}" || "${tag_name}" == "null" ]]; then
+    log "failed to resolve easymosdns release tag"
     exit 1
   fi
+  tarball_url="$(release_archive_url "${EASYMOSDNS_REPO}" "${tag_name}")"
 
   tmp_dir="$(mktemp -d)"
   src_dir="${tmp_dir}/src"
   mkdir -p "${src_dir}"
 
-  log "downloading ${EASYMOSDNS_REPO} ${EASYMOSDNS_REF}"
+  log "downloading ${EASYMOSDNS_REPO} ${EASYMOSDNS_REF} via ${BOOTSTRAP_DOWNLOAD_MODE}"
   download_file "${tarball_url}" "${tmp_dir}/easymosdns.tar.gz"
   tar -xzf "${tmp_dir}/easymosdns.tar.gz" -C "${src_dir}"
   extracted_root="$(find "${src_dir}" -mindepth 1 -maxdepth 1 -type d | head -n1)"

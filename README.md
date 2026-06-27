@@ -26,6 +26,7 @@
 - `/etc/mosdns` 持久化
 - 首次启动自动初始化 `easymosdns`
 - 后续不覆盖用户配置
+- `mosdns-x` 与 `easymosdns` 默认通过 CDN 下载
 - 每天凌晨 `03:00` 自动更新规则
 - 规则更新方式默认为 `cdn`
 - 自带本地 DNS 健康检查
@@ -59,7 +60,6 @@ services:
       - "9080:9080/tcp"
     environment:
       TZ: Asia/Shanghai
-      RULES_UPDATE_MODE: cdn
       RULES_UPDATE_CRON: "0 3 * * *"
     volumes:
       - easymosdns-x-workdir:/etc/mosdns
@@ -81,7 +81,7 @@ volumes:
 启动逻辑如下：
 
 1. 如果 `/etc/mosdns` 没有持久化挂载，容器直接退出
-2. 如果标记文件不存在，就下载官方 `easymosdns`
+2. 如果标记文件不存在，就通过 CDN 下载官方 `easymosdns`
 3. 写入 `config.yaml`、`hosts.txt`、`ecs_*.txt` 和 `rules/`
 4. 写入标记文件
 5. 后续启动如果标记文件存在，就跳过初始化，避免覆盖用户修改
@@ -115,6 +115,21 @@ RULES_UPDATE_MODE=direct
 
 ```bash
 RULES_UPDATE_MODE=none
+```
+
+## 启动资源下载
+
+容器在首次启动时会下载：
+
+- `mosdns-x` 二进制
+- `easymosdns` 配置模板
+
+默认会通过 CDN 拉取这些 GitHub 资源，更适合国内网络环境。
+
+如果你想改回直连，可以设置：
+
+```bash
+BOOTSTRAP_DOWNLOAD_MODE=direct
 ```
 
 ## 健康检查
@@ -234,6 +249,9 @@ FORCE_REINIT=true
 `EASYMOSDNS_REF`
 : 固定 `easymosdns` 版本
 
+`BOOTSTRAP_DOWNLOAD_MODE`
+: 控制 `mosdns-x` 与 `easymosdns` 下载方式，支持 `cdn` 或 `direct`
+
 `RULES_UPDATE_TIME`
 : 用每天固定时间更新规则，例如 `03:00`
 
@@ -255,7 +273,6 @@ docker run -d \
   -p 9080:9080/tcp \
   -v easymosdns-x-data:/etc/mosdns \
   -e TZ=Asia/Shanghai \
-  -e RULES_UPDATE_MODE=cdn \
   -e RULES_UPDATE_CRON="0 3 * * *" \
   olorz/easymosdns-x-docker:latest
 ```
