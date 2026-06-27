@@ -39,12 +39,12 @@ docker compose up -d
 
 ```yaml
 services:
-  easymosdns:
+  easymosdns-x:
     build:
       context: .
       dockerfile: Dockerfile
-    image: easymosdns-x:latest
-    container_name: easymosdns
+    image: easymosdns-x-docker:latest
+    container_name: easymosdns-x
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
@@ -61,10 +61,10 @@ services:
       RULES_UPDATE_MODE: cdn
       RULES_UPDATE_CRON: "0 3 * * *"
     volumes:
-      - easymosdns-workdir:/etc/mosdns
+      - easymosdns-x-workdir:/etc/mosdns
 
 volumes:
-  easymosdns-workdir:
+  easymosdns-x-workdir:
 ```
 
 ## 初始化策略
@@ -148,7 +148,7 @@ RULES_UPDATE_MODE=none
 现在 workflow 已经改成最小配置版，镜像名直接写死为：
 
 ```text
-olorz996/easymosdns-docker
+olorz996/easymosdns-x-docker
 ```
 
 所以 GitHub 仓库里只需要配置 2 个 `Repository secrets`：
@@ -183,16 +183,6 @@ workflow 默认构建：
 
 - `linux/amd64`
 - `linux/arm64`
-
-### 参考资料
-
-我按官方文档和 Docker 官方 actions 当前发布主版本组织了这个 workflow：
-
-- [GitHub Docs: Publishing Docker images](https://docs.github.com/actions/guides/publishing-docker-images)
-- [docker/login-action releases](https://github.com/docker/login-action/releases)
-- [docker/build-push-action releases](https://github.com/docker/build-push-action/releases)
-- [docker/metadata-action releases](https://github.com/docker/metadata-action/releases)
-- [docker/setup-buildx-action releases](https://github.com/docker/setup-buildx-action/releases)
 
 ## 更安全的重初始化方式
 
@@ -241,28 +231,28 @@ FORCE_REINIT=true
 
 ```bash
 docker run -d \
-  --name easymosdns \
+  --name easymosdns-x \
   -p 53:53/udp \
   -p 53:53/tcp \
   -p 9080:9080/tcp \
-  -v easymosdns-data:/etc/mosdns \
+  -v easymosdns-x-data:/etc/mosdns \
   -e TZ=Asia/Shanghai \
   -e RULES_UPDATE_MODE=cdn \
   -e RULES_UPDATE_CRON="0 3 * * *" \
-  easymosdns-x:latest
+  easymosdns-x-docker:latest
 ```
 
 强制重初始化：
 
 ```bash
 docker run -d \
-  --name easymosdns \
+  --name easymosdns-x \
   -p 53:53/udp \
   -p 53:53/tcp \
   -p 9080:9080/tcp \
-  -v easymosdns-data:/etc/mosdns \
+  -v easymosdns-x-data:/etc/mosdns \
   -e FORCE_REINIT=true \
-  easymosdns-x:latest
+  easymosdns-x-docker:latest
 ```
 
 ## 注意事项

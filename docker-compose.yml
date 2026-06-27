@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: easymosdns-x:latest
-    container_name: easymosdns
+    image: easymosdns-x-docker:latest
+    container_name: easymosdns-x
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
