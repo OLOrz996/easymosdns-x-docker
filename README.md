@@ -11,7 +11,7 @@
 2. 后续保留用户自己修改过的配置
 3. 自动更新规则
 4. 提供本地健康检查
-5. 支持 GitHub Actions 自动构建并推送到 Docker Hub
+5. 支持 GitHub Actions 自动校验构建，并在正式 tag 时推送到 Docker Hub
 6. 支持将 Docker Hub 短描述与完整说明从仓库自动同步过去
 
 ## 最小使用方式
@@ -138,11 +138,16 @@ RULES_UPDATE_MODE=none
 
 - `.github/workflows/docker-publish.yml`
 
-它会在以下场景自动构建并推送镜像：
+它会在以下场景自动运行：
 
 - push 到 `main`
 - push `v*` 标签
 - 手动触发 `workflow_dispatch`
+
+其中：
+
+- `main` 和手动触发默认只做构建校验，不推送 Docker Hub
+- 只有 `v*` 标签会正式推送镜像并同步 Docker Hub 描述
 
 ### 最小配置
 
@@ -172,10 +177,10 @@ olorz/easymosdns-x-docker
 
 ### 推送标签策略
 
-workflow 默认会推送这些标签：
+正式发布时，workflow 会推送这些标签：
 
 - `latest`
-  默认分支构建时生成
+  跟随最新正式版本更新
 - `vX.Y.Z`
   例如推送 Git 标签 `v1.0.0` 时生成 `v1.0.0`
 - `X.Y`
@@ -190,9 +195,10 @@ workflow 默认构建：
 
 ### 描述同步失败时的表现
 
-workflow 会把“镜像推送”和“Docker Hub 描述同步”分开总结：
+workflow 会把“构建校验”和“正式发布”分开总结：
 
-- 如果镜像推送成功，但描述同步失败
+- 非 tag 运行时，只显示校验构建成功，Docker Hub 推送会被跳过
+- tag 发布时，如果镜像推送成功，但描述同步失败
 - Actions Summary 会明确提示是描述同步失败
 - job 也会在最后显式失败，方便第一时间发现问题
 
