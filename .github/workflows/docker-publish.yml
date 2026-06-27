@@ -70,7 +70,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: olorz/easymosdns-x-docker
           short-description: ${{ steps.dockerhub_short.outputs.value }}
-          readme-filepath: ./dockerhub/README.md
+          readme-filepath: ./README.md
           enable-url-completion: true
 
       - name: Summarize Docker publish result

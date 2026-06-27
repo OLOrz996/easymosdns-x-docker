@@ -1,1 +1,1 @@
-基于 mosdns-x 的 EasyMosdns Docker 镜像，支持首次自动初始化配置与定时更新规则
+基于 mosdns-x 的 EasyMosdns Docker 镜像

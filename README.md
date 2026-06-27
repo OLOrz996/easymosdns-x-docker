@@ -7,27 +7,27 @@
 
 设计目标很简单：
 
-1. 第一次启动时自动初始化 `easymosdns`
+1. 首次启动时自动初始化 `easymosdns`
 2. 后续保留用户自己修改过的配置
 3. 自动更新规则
 4. 提供本地健康检查
 5. 支持 GitHub Actions 自动构建并推送到 Docker Hub
-6. 支持将 Docker Hub 简介与完整说明从仓库自动同步过去
+6. 支持将 Docker Hub 短描述与完整说明从仓库自动同步过去
 
 ## 最小使用方式
 
-大多数情况下，你只需要这两个可选环境变量：
+大多数情况下，你只需要关注两个环境变量：
 
 - `TZ`
 - `RULES_UPDATE_CRON`
 
-当前 [docker-compose.yml](C:/Users/john2/Documents/repo/easymosdns-v5/docker-compose.yml) 默认行为是：
+当前 `docker-compose.yml` 默认行为是：
 
 - `/etc/mosdns` 持久化
 - 首次启动自动初始化 `easymosdns`
 - 后续不覆盖用户配置
 - 每天凌晨 `03:00` 自动更新规则
-- 规则更新方式默认走 `cdn`
+- 规则更新方式默认为 `cdn`
 - 自带本地 DNS 健康检查
 
 直接启动：
@@ -72,7 +72,7 @@ volumes:
 
 容器要求 `mosdns` 工作目录持久化挂载到 `/etc/mosdns`。
 
-镜像会在该目录里写一个隐藏初始化标记文件：
+镜像会在该目录里写入隐藏初始化标记文件：
 
 ```bash
 /etc/mosdns/.easymosdns-initialized
@@ -80,9 +80,9 @@ volumes:
 
 启动逻辑如下：
 
-1. 如果 `/etc/mosdns` 没有挂载持久卷，容器直接退出
+1. 如果 `/etc/mosdns` 没有持久化挂载，容器直接退出
 2. 如果标记文件不存在，就下载官方 `easymosdns`
-3. 写入 `config.yaml`、`hosts.txt`、`ecs_*.txt`、`rules/`
+3. 写入 `config.yaml`、`hosts.txt`、`ecs_*.txt` 和 `rules/`
 4. 写入标记文件
 5. 后续启动如果标记文件存在，就跳过初始化，避免覆盖用户修改
 
@@ -130,13 +130,13 @@ RULES_UPDATE_MODE=none
 - 不依赖上游 DNS 是否暂时可达
 - 能同时确认“进程还活着”和“本地解析功能正常”
 
-健康检查脚本在 [docker/healthcheck.sh](C:/Users/john2/Documents/repo/easymosdns-v5/docker/healthcheck.sh)。
+健康检查脚本位于 `docker/healthcheck.sh`。
 
 ## GitHub Actions 构建并推送 Docker Hub
 
-仓库现在已经带了 workflow：
+仓库已经带了 workflow：
 
-- [.github/workflows/docker-publish.yml](C:/Users/john2/Documents/repo/easymosdns-v5/.github/workflows/docker-publish.yml)
+- `.github/workflows/docker-publish.yml`
 
 它会在以下场景自动构建并推送镜像：
 
@@ -146,7 +146,7 @@ RULES_UPDATE_MODE=none
 
 ### 最小配置
 
-现在 workflow 已经改成最小配置版，镜像名直接写死为：
+workflow 现在采用最小配置，镜像名直接写死为：
 
 ```text
 olorz/easymosdns-x-docker
@@ -168,20 +168,18 @@ olorz/easymosdns-x-docker
 此外，Docker Hub 的说明文字现在也支持从仓库自动同步：
 
 - 短描述：`dockerhub/short-description.txt`
-- 完整说明：`dockerhub/README.md`
+- 完整说明：仓库根目录 `README.md`
 
 ### 推送标签策略
 
 workflow 默认会推送这些标签：
 
 - `latest`
-: 当构建来自默认分支时
-
+  默认分支构建时生成
 - Git 标签名
-: 例如推送 `v1.0.0` 时生成同名镜像标签
-
+  例如推送 `v1.0.0` 时生成同名镜像标签
 - `sha-*`
-: 每次构建都会生成一个带提交 SHA 的标签
+  每次构建都会生成一个带提交 SHA 的标签
 
 ### 多架构
 
@@ -192,11 +190,11 @@ workflow 默认构建：
 
 ### 描述同步失败时的表现
 
-workflow 现在会把“镜像推送”和“Docker Hub 简介同步”分开总结：
+workflow 会把“镜像推送”和“Docker Hub 描述同步”分开总结：
 
-- 如果镜像推送成功，但简介同步失败
+- 如果镜像推送成功，但描述同步失败
 - Actions Summary 会明确提示是描述同步失败
-- job 也会在最后显式失败，方便你第一眼发现问题
+- job 也会在最后显式失败，方便第一时间发现问题
 
 ## 更安全的重初始化方式
 
@@ -216,7 +214,7 @@ FORCE_REINIT=true
 
 ## 高级环境变量
 
-下面这些变量保留支持，但普通使用场景一般不需要改：
+下面这些变量仍然支持，但普通使用场景通常不需要改：
 
 `FORCE_REINIT`
 : 强制重新初始化 `easymosdns`
@@ -253,7 +251,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e RULES_UPDATE_MODE=cdn \
   -e RULES_UPDATE_CRON="0 3 * * *" \
-  easymosdns-x-docker:latest
+  olorz/easymosdns-x-docker:latest
 ```
 
 强制重初始化：
@@ -266,11 +264,11 @@ docker run -d \
   -p 9080:9080/tcp \
   -v easymosdns-x-data:/etc/mosdns \
   -e FORCE_REINIT=true \
-  easymosdns-x-docker:latest
+  olorz/easymosdns-x-docker:latest
 ```
 
 ## 注意事项
 
-- 当前镜像默认面向常见 Linux 架构自动选取 `mosdns-x` 二进制
+- 当前镜像默认面向常见 Linux 架构自动选择 `mosdns-x` 二进制
 - `RULES_UPDATE_CRON` 使用容器内 `TZ` 时区
 - `easymosdns` 初始化后，后续不会自动升级配置模板，除非显式开启 `FORCE_REINIT=true`
