@@ -156,7 +156,7 @@ docker build \
 它会在以下场景自动运行：
 
 - push 到 `main`
-- 每 6 小时定时检查一次上游版本
+- 每小时定时检查一次上游版本
 - 手动触发 `workflow_dispatch`
 
 其中：
