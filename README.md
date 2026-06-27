@@ -148,7 +148,7 @@ RULES_UPDATE_MODE=none
 现在 workflow 已经改成最小配置版，镜像名直接写死为：
 
 ```text
-olorz996/easymosdns-x-docker
+olorz/easymosdns-x-docker
 ```
 
 所以 GitHub 仓库里只需要配置 2 个 `Repository secrets`：
