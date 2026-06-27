@@ -11,6 +11,7 @@
 2. 后续保留用户自己修改过的配置
 3. 自动更新规则
 4. 提供本地健康检查
+5. 支持 GitHub Actions 自动构建并推送到 Docker Hub
 
 ## 最小使用方式
 
@@ -129,6 +130,68 @@ RULES_UPDATE_MODE=none
 - 能同时确认“进程还活着”和“本地解析功能正常”
 
 健康检查脚本在 [docker/healthcheck.sh](C:/Users/john2/Documents/repo/easymosdns-v5/docker/healthcheck.sh)。
+
+## GitHub Actions 构建并推送 Docker Hub
+
+仓库现在已经带了 workflow：
+
+- [.github/workflows/docker-publish.yml](C:/Users/john2/Documents/repo/easymosdns-v5/.github/workflows/docker-publish.yml)
+
+它会在以下场景自动构建并推送镜像：
+
+- push 到 `main`
+- push `v*` 标签
+- 手动触发 `workflow_dispatch`
+
+### 需要配置的 GitHub Secrets
+
+在 GitHub 仓库的 `Settings > Secrets and variables > Actions` 里添加：
+
+`DOCKERHUB_USERNAME`
+: Docker Hub 用户名
+
+`DOCKERHUB_TOKEN`
+: Docker Hub Access Token，建议不要直接用密码
+
+### 需要配置的 GitHub Variables
+
+同样在 GitHub 仓库里添加：
+
+`DOCKERHUB_NAMESPACE`
+: 例如 `olorz996`
+
+`DOCKERHUB_IMAGE`
+: 例如 `easymosdns-docker`
+
+### 推送标签策略
+
+workflow 默认会推送这些标签：
+
+- `latest`
+: 当构建来自默认分支时
+
+- Git 标签名
+: 例如推送 `v1.0.0` 时生成同名镜像标签
+
+- `sha-*`
+: 每次构建都会生成一个带提交 SHA 的标签
+
+### 多架构
+
+workflow 默认构建：
+
+- `linux/amd64`
+- `linux/arm64`
+
+### 参考资料
+
+我按官方文档和 Docker 官方 actions 当前发布主版本组织了这个 workflow：
+
+- [GitHub Docs: Publishing Docker images](https://docs.github.com/actions/guides/publishing-docker-images)
+- [docker/login-action releases](https://github.com/docker/login-action/releases)
+- [docker/build-push-action releases](https://github.com/docker/build-push-action/releases)
+- [docker/metadata-action releases](https://github.com/docker/metadata-action/releases)
+- [docker/setup-buildx-action releases](https://github.com/docker/setup-buildx-action/releases)
 
 ## 更安全的重初始化方式
 
