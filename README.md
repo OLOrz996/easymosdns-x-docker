@@ -128,6 +128,8 @@ RULES_UPDATE_MODE=none
 
 当前启动下载不再依赖 `api.github.com`，而是直接使用 GitHub release/archive 地址，更适合国内网络环境。
 
+如果 `latest` 在当前网络环境下仍然不稳定，建议直接固定 `MOSDNS_X_REF` 和 `EASYMOSDNS_REF` 为明确的 release tag。
+
 如果你想改回直连，可以设置：
 
 ```bash

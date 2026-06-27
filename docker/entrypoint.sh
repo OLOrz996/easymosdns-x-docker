@@ -243,26 +243,80 @@ release_asset_url() {
   fi
 }
 
+is_github_resource_url() {
+  local url=$1
+  case "${url}" in
+    https://github.com/*|https://raw.githubusercontent.com/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bootstrap_candidate_urls() {
+  local url=$1
+  local prefix
+  case "${BOOTSTRAP_DOWNLOAD_MODE}" in
+    direct)
+      printf '%s\n' "${url}"
+      ;;
+    cdn)
+      if is_github_resource_url "${url}"; then
+        if [[ -n "${BOOTSTRAP_CDN_PREFIX}" ]]; then
+          printf '%s%s\n' "${BOOTSTRAP_CDN_PREFIX}" "${url}"
+        fi
+        for prefix in ${BOOTSTRAP_CDN_FALLBACKS:-}; do
+          if [[ -n "${prefix}" && "${prefix}" != "${BOOTSTRAP_CDN_PREFIX}" ]]; then
+            printf '%s%s\n' "${prefix}" "${url}"
+          fi
+        done
+        printf '%s\n' "${url}"
+      else
+        printf '%s\n' "${url}"
+      fi
+      ;;
+    *)
+      log "invalid BOOTSTRAP_DOWNLOAD_MODE=${BOOTSTRAP_DOWNLOAD_MODE}, expected direct/cdn"
+      exit 1
+      ;;
+  esac
+}
+
 resolve_release_tag() {
   local repo=$1
   local ref=$2
-  local release_url effective_url
+  local release_url effective_url candidate_url
   if [[ "${ref}" != "latest" ]]; then
     printf '%s\n' "${ref}"
     return 0
   fi
 
-  release_url="$(bootstrap_download_url "https://github.com/${repo}/releases/latest")"
-  effective_url="$(
-    curl -fsSIL -o /dev/null -w '%{url_effective}' "${release_url}"
-  )"
-  if [[ "${effective_url}" =~ /releases/tag/([^/?#]+) ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-    return 0
-  fi
+  release_url="https://github.com/${repo}/releases/latest"
+  while IFS= read -r candidate_url; do
+    [[ -z "${candidate_url}" ]] && continue
+    if effective_url="$(
+      curl -fsSIL -o /dev/null -w '%{url_effective}' "${candidate_url}"
+    )"; then
+      if [[ "${effective_url}" =~ /releases/tag/([^/?#]+) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+      fi
+      log "latest release redirect did not contain a tag: ${candidate_url}"
+      log "effective url: ${effective_url}"
+    else
+      log "failed to resolve latest release via ${candidate_url}"
+    fi
+  done < <(bootstrap_candidate_urls "${release_url}")
 
   log "failed to resolve latest release tag for ${repo}"
-  log "effective url: ${effective_url}"
+  log "consider pinning a fixed release tag, for example:"
+  if [[ "${repo}" == "${MOSDNS_X_REPO}" ]]; then
+    log "  MOSDNS_X_REF=v26.05.25"
+  elif [[ "${repo}" == "${EASYMOSDNS_REPO}" ]]; then
+    log "  EASYMOSDNS_REF=easymosdns-v3.5-2"
+  fi
   exit 1
 }
 
@@ -270,15 +324,26 @@ download_file() {
   local url=$1
   local dest=$2
   local final_url
-  final_url="$(bootstrap_download_url "${url}")"
-  if [[ -n "${GITHUB_TOKEN}" && "${final_url}" =~ ^https://(api\.)?github\.com/ ]]; then
-    curl -fsSL \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      -o "${dest}" \
-      "${final_url}"
-  else
-    curl -fsSL -o "${dest}" "${final_url}"
-  fi
+  while IFS= read -r final_url; do
+    [[ -z "${final_url}" ]] && continue
+    if [[ -n "${GITHUB_TOKEN}" && "${final_url}" =~ ^https://(api\.)?github\.com/ ]]; then
+      if curl -fsSL \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -o "${dest}" \
+        "${final_url}"; then
+        return 0
+      fi
+    else
+      if curl -fsSL -o "${dest}" "${final_url}"; then
+        return 0
+      fi
+    fi
+    log "download failed via ${final_url}"
+  done < <(bootstrap_candidate_urls "${url}")
+
+  log "failed to download ${url}"
+  log "consider pinning MOSDNS_X_REF / EASYMOSDNS_REF to fixed release tags if latest resolution is unstable"
+  exit 1
 }
 
 install_mosdns_x() {
