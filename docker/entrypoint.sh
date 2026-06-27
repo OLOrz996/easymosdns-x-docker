@@ -21,7 +21,6 @@ set -euo pipefail
 : "${INIT_MARKER_FILE:=.easymosdns-initialized}"
 : "${FORCE_REINIT:=false}"
 : "${BACKUP_ON_REINIT:=true}"
-: "${GITHUB_API:=https://api.github.com}"
 : "${GITHUB_TOKEN:=}"
 
 log() {
@@ -37,20 +36,6 @@ is_true() {
       return 1
       ;;
   esac
-}
-
-api_get() {
-  local url=$1
-  if [[ -n "${GITHUB_TOKEN}" ]]; then
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      "$url"
-  else
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      "$url"
-  fi
 }
 
 marker_path() {
@@ -218,16 +203,6 @@ detect_arch() {
   esac
 }
 
-release_api_url() {
-  local repo=$1
-  local ref=$2
-  if [[ "${ref}" == "latest" ]]; then
-    echo "${GITHUB_API}/repos/${repo}/releases/latest"
-  else
-    echo "${GITHUB_API}/repos/${repo}/releases/tags/${ref}"
-  fi
-}
-
 bootstrap_download_url() {
   local url=$1
   case "${BOOTSTRAP_DOWNLOAD_MODE}" in
@@ -257,12 +232,46 @@ release_archive_url() {
   printf 'https://github.com/%s/archive/refs/tags/%s.tar.gz\n' "${repo}" "${tag}"
 }
 
+release_asset_url() {
+  local repo=$1
+  local ref=$2
+  local asset_name=$3
+  if [[ "${ref}" == "latest" ]]; then
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "${repo}" "${asset_name}"
+  else
+    printf 'https://github.com/%s/releases/download/%s/%s\n' "${repo}" "${ref}" "${asset_name}"
+  fi
+}
+
+resolve_release_tag() {
+  local repo=$1
+  local ref=$2
+  local release_url effective_url
+  if [[ "${ref}" != "latest" ]]; then
+    printf '%s\n' "${ref}"
+    return 0
+  fi
+
+  release_url="$(bootstrap_download_url "https://github.com/${repo}/releases/latest")"
+  effective_url="$(
+    curl -fsSIL -o /dev/null -w '%{url_effective}' "${release_url}"
+  )"
+  if [[ "${effective_url}" =~ /releases/tag/([^/?#]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  log "failed to resolve latest release tag for ${repo}"
+  log "effective url: ${effective_url}"
+  exit 1
+}
+
 download_file() {
   local url=$1
   local dest=$2
   local final_url
   final_url="$(bootstrap_download_url "${url}")"
-  if [[ -n "${GITHUB_TOKEN}" ]]; then
+  if [[ -n "${GITHUB_TOKEN}" && "${final_url}" =~ ^https://(api\.)?github\.com/ ]]; then
     curl -fsSL \
       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       -o "${dest}" \
@@ -273,9 +282,8 @@ download_file() {
 }
 
 install_mosdns_x() {
-  local arch release_json asset_name asset_url tmp_dir tmp_zip tmp_extract
+  local arch asset_name asset_url release_tag tmp_dir tmp_zip tmp_extract
   arch="$(detect_arch)"
-  release_json="$(api_get "$(release_api_url "${MOSDNS_X_REPO}" "${MOSDNS_X_REF}")")"
 
   case "${arch}" in
     amd64)
@@ -294,12 +302,8 @@ install_mosdns_x() {
       asset_name="mosdns-linux-arm-5.zip"
       ;;
   esac
-
-  asset_url="$(jq -r --arg name "${asset_name}" '.assets[] | select(.name == $name) | .browser_download_url' <<< "${release_json}" | head -n1)"
-  if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
-    log "failed to find mosdns-x asset ${asset_name}"
-    exit 1
-  fi
+  release_tag="$(resolve_release_tag "${MOSDNS_X_REPO}" "${MOSDNS_X_REF}")"
+  asset_url="$(release_asset_url "${MOSDNS_X_REPO}" "${MOSDNS_X_REF}" "${asset_name}")"
 
   tmp_dir="$(mktemp -d)"
   tmp_zip="${tmp_dir}/mosdns.zip"
@@ -311,18 +315,13 @@ install_mosdns_x() {
   unzip -q "${tmp_zip}" -d "${tmp_extract}"
 
   install -m 0755 "${tmp_extract}/mosdns" /usr/local/bin/mosdns
-  jq -r '{tag_name, published_at}' <<< "${release_json}" > "${MOSDNS_DATA_DIR}/mosdns-x-release.json"
+  printf '{\n  "tag_name": "%s"\n}\n' "${release_tag}" > "${MOSDNS_DATA_DIR}/mosdns-x-release.json"
   rm -rf "${tmp_dir}"
 }
 
 sync_easymosdns() {
-  local release_json tag_name tarball_url tmp_dir src_dir extracted_root
-  release_json="$(api_get "$(release_api_url "${EASYMOSDNS_REPO}" "${EASYMOSDNS_REF}")")"
-  tag_name="$(jq -r '.tag_name' <<< "${release_json}")"
-  if [[ -z "${tag_name}" || "${tag_name}" == "null" ]]; then
-    log "failed to resolve easymosdns release tag"
-    exit 1
-  fi
+  local tag_name tarball_url tmp_dir src_dir extracted_root
+  tag_name="$(resolve_release_tag "${EASYMOSDNS_REPO}" "${EASYMOSDNS_REF}")"
   tarball_url="$(release_archive_url "${EASYMOSDNS_REPO}" "${tag_name}")"
 
   tmp_dir="$(mktemp -d)"
@@ -341,11 +340,11 @@ sync_easymosdns() {
   cp -f "${extracted_root}/ecs_noncn_domain.txt" "${MOSDNS_WORKDIR}/ecs_noncn_domain.txt"
   cp -rf "${extracted_root}/rules/." "${MOSDNS_WORKDIR}/rules/"
 
-  jq -r '{tag_name, published_at}' <<< "${release_json}" > "${MOSDNS_DATA_DIR}/easymosdns-release.json"
+  printf '{\n  "tag_name": "%s"\n}\n' "${tag_name}" > "${MOSDNS_DATA_DIR}/easymosdns-release.json"
   printf 'initialized_at=%s\n' "$(date -Iseconds)" > "$(marker_path)"
   printf 'repo=%s\n' "${EASYMOSDNS_REPO}" >> "$(marker_path)"
   printf 'ref=%s\n' "${EASYMOSDNS_REF}" >> "$(marker_path)"
-  printf 'tag=%s\n' "$(jq -r '.tag_name' <<< "${release_json}")" >> "$(marker_path)"
+  printf 'tag=%s\n' "${tag_name}" >> "$(marker_path)"
   rm -rf "${tmp_dir}"
 }
 

@@ -126,6 +126,8 @@ RULES_UPDATE_MODE=none
 
 默认会通过 CDN 拉取这些 GitHub 资源，更适合国内网络环境。
 
+当前启动下载不再依赖 `api.github.com`，而是直接使用 GitHub release/archive 地址，更适合国内网络环境。
+
 如果你想改回直连，可以设置：
 
 ```bash
@@ -259,7 +261,7 @@ FORCE_REINIT=true
 : 用固定间隔更新规则
 
 `GITHUB_TOKEN`
-: 提高 GitHub API 限额
+: 在 `BOOTSTRAP_DOWNLOAD_MODE=direct` 时用于访问 GitHub，默认 CDN 模式不会使用它
 
 ## 运行示例
 

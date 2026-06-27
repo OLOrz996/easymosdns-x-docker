@@ -6,7 +6,6 @@ RUN apk add --no-cache \
     ca-certificates \
     coreutils \
     curl \
-    jq \
     tar \
     tzdata \
     unzip
