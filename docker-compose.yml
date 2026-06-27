@@ -19,7 +19,6 @@ services:
     environment:
       TZ: Asia/Shanghai
       RULES_UPDATE_CRON: "0 3 * * *"
-      # GITHUB_TOKEN: ""
     volumes:
       - easymosdns-workdir:/etc/mosdns
 

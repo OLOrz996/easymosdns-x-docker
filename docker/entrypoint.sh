@@ -4,24 +4,18 @@ set -euo pipefail
 : "${MOSDNS_WORKDIR:=/etc/mosdns}"
 : "${MOSDNS_CONFIG:=config.yaml}"
 : "${MOSDNS_DATA_DIR:=/var/lib/easymosdns-bootstrap}"
-: "${MOSDNS_X_REPO:=pmkol/mosdns-x}"
-: "${EASYMOSDNS_REPO:=pmkol/easymosdns}"
-: "${MOSDNS_X_REF:=latest}"
-: "${EASYMOSDNS_REF:=latest}"
+: "${EASYMOSDNS_TEMPLATE_DIR:=/opt/easymosdns-template}"
 : "${AUTO_UPDATE:=true}"
 : "${RULES_AUTO_UPDATE:=true}"
 : "${RULES_UPDATE_INTERVAL:=86400}"
 : "${RULES_UPDATE_TIME:=}"
 : "${RULES_UPDATE_CRON:=}"
 : "${RULES_UPDATE_MODE:=cdn}"
-: "${BOOTSTRAP_DOWNLOAD_MODE:=cdn}"
-: "${BOOTSTRAP_CDN_PREFIX:=https://ghproxy.net/}"
 : "${RULES_UPDATE_ON_START:=true}"
 : "${FORCE_PERSISTENT_WORKDIR:=true}"
 : "${INIT_MARKER_FILE:=.easymosdns-initialized}"
 : "${FORCE_REINIT:=false}"
 : "${BACKUP_ON_REINIT:=true}"
-: "${GITHUB_TOKEN:=}"
 
 log() {
   printf '[entrypoint] %s\n' "$*"
@@ -179,253 +173,52 @@ sleep_until_next_cron_match() {
   done
 }
 
-detect_arch() {
-  case "$(uname -m)" in
-    x86_64|amd64)
-      echo "amd64"
-      ;;
-    aarch64|arm64)
-      echo "arm64"
-      ;;
-    armv7l)
-      echo "arm-7"
-      ;;
-    armv6l)
-      echo "arm-6"
-      ;;
-    armv5l)
-      echo "arm-5"
-      ;;
-    *)
-      log "unsupported architecture: $(uname -m)"
-      exit 1
-      ;;
-  esac
+read_json_tag_name() {
+  local file_path=$1
+  sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "${file_path}" | head -n1
 }
 
-bootstrap_download_url() {
-  local url=$1
-  case "${BOOTSTRAP_DOWNLOAD_MODE}" in
-    direct)
-      printf '%s\n' "${url}"
-      ;;
-    cdn)
-      case "${url}" in
-        https://github.com/*|https://raw.githubusercontent.com/*)
-          printf '%s%s\n' "${BOOTSTRAP_CDN_PREFIX}" "${url}"
-          ;;
-        *)
-          printf '%s\n' "${url}"
-          ;;
-      esac
-      ;;
-    *)
-      log "invalid BOOTSTRAP_DOWNLOAD_MODE=${BOOTSTRAP_DOWNLOAD_MODE}, expected direct/cdn"
-      exit 1
-      ;;
-  esac
-}
-
-release_archive_url() {
-  local repo=$1
-  local tag=$2
-  printf 'https://github.com/%s/archive/refs/tags/%s.tar.gz\n' "${repo}" "${tag}"
-}
-
-release_asset_url() {
-  local repo=$1
-  local ref=$2
-  local asset_name=$3
-  if [[ "${ref}" == "latest" ]]; then
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "${repo}" "${asset_name}"
-  else
-    printf 'https://github.com/%s/releases/download/%s/%s\n' "${repo}" "${ref}" "${asset_name}"
+sync_bundled_easymosdns() {
+  local bundled_tag
+  if [[ ! -d "${EASYMOSDNS_TEMPLATE_DIR}" ]]; then
+    log "bundled easymosdns template not found: ${EASYMOSDNS_TEMPLATE_DIR}"
+    exit 1
   fi
-}
-
-is_github_resource_url() {
-  local url=$1
-  case "${url}" in
-    https://github.com/*|https://raw.githubusercontent.com/*)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-bootstrap_candidate_urls() {
-  local url=$1
-  local prefix
-  case "${BOOTSTRAP_DOWNLOAD_MODE}" in
-    direct)
-      printf '%s\n' "${url}"
-      ;;
-    cdn)
-      if is_github_resource_url "${url}"; then
-        if [[ -n "${BOOTSTRAP_CDN_PREFIX}" ]]; then
-          printf '%s%s\n' "${BOOTSTRAP_CDN_PREFIX}" "${url}"
-        fi
-        for prefix in ${BOOTSTRAP_CDN_FALLBACKS:-}; do
-          if [[ -n "${prefix}" && "${prefix}" != "${BOOTSTRAP_CDN_PREFIX}" ]]; then
-            printf '%s%s\n' "${prefix}" "${url}"
-          fi
-        done
-        printf '%s\n' "${url}"
-      else
-        printf '%s\n' "${url}"
-      fi
-      ;;
-    *)
-      log "invalid BOOTSTRAP_DOWNLOAD_MODE=${BOOTSTRAP_DOWNLOAD_MODE}, expected direct/cdn"
-      exit 1
-      ;;
-  esac
-}
-
-resolve_release_tag() {
-  local repo=$1
-  local ref=$2
-  local release_url effective_url candidate_url
-  if [[ "${ref}" != "latest" ]]; then
-    printf '%s\n' "${ref}"
-    return 0
-  fi
-
-  release_url="https://github.com/${repo}/releases/latest"
-  while IFS= read -r candidate_url; do
-    [[ -z "${candidate_url}" ]] && continue
-    if effective_url="$(
-      curl -fsSIL -o /dev/null -w '%{url_effective}' "${candidate_url}"
-    )"; then
-      if [[ "${effective_url}" =~ /releases/tag/([^/?#]+) ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-        return 0
-      fi
-      log "latest release redirect did not contain a tag: ${candidate_url}"
-      log "effective url: ${effective_url}"
-    else
-      log "failed to resolve latest release via ${candidate_url}"
-    fi
-  done < <(bootstrap_candidate_urls "${release_url}")
-
-  log "failed to resolve latest release tag for ${repo}"
-  log "consider pinning a fixed release tag, for example:"
-  if [[ "${repo}" == "${MOSDNS_X_REPO}" ]]; then
-    log "  MOSDNS_X_REF=v26.05.25"
-  elif [[ "${repo}" == "${EASYMOSDNS_REPO}" ]]; then
-    log "  EASYMOSDNS_REF=easymosdns-v3.5-2"
-  fi
-  exit 1
-}
-
-download_file() {
-  local url=$1
-  local dest=$2
-  local final_url
-  while IFS= read -r final_url; do
-    [[ -z "${final_url}" ]] && continue
-    if [[ -n "${GITHUB_TOKEN}" && "${final_url}" =~ ^https://(api\.)?github\.com/ ]]; then
-      if curl -fsSL \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -o "${dest}" \
-        "${final_url}"; then
-        return 0
-      fi
-    else
-      if curl -fsSL -o "${dest}" "${final_url}"; then
-        return 0
-      fi
-    fi
-    log "download failed via ${final_url}"
-  done < <(bootstrap_candidate_urls "${url}")
-
-  log "failed to download ${url}"
-  log "consider pinning MOSDNS_X_REF / EASYMOSDNS_REF to fixed release tags if latest resolution is unstable"
-  exit 1
-}
-
-install_mosdns_x() {
-  local arch asset_name asset_url release_tag tmp_dir tmp_zip tmp_extract
-  arch="$(detect_arch)"
-
-  case "${arch}" in
-    amd64)
-      asset_name="mosdns-linux-amd64.zip"
-      ;;
-    arm64)
-      asset_name="mosdns-linux-arm64.zip"
-      ;;
-    arm-7)
-      asset_name="mosdns-linux-arm-7.zip"
-      ;;
-    arm-6)
-      asset_name="mosdns-linux-arm-6.zip"
-      ;;
-    arm-5)
-      asset_name="mosdns-linux-arm-5.zip"
-      ;;
-  esac
-  release_tag="$(resolve_release_tag "${MOSDNS_X_REPO}" "${MOSDNS_X_REF}")"
-  asset_url="$(release_asset_url "${MOSDNS_X_REPO}" "${MOSDNS_X_REF}" "${asset_name}")"
-
-  tmp_dir="$(mktemp -d)"
-  tmp_zip="${tmp_dir}/mosdns.zip"
-  tmp_extract="${tmp_dir}/extract"
-  mkdir -p "${tmp_extract}"
-
-  log "downloading ${MOSDNS_X_REPO} ${MOSDNS_X_REF} (${asset_name}) via ${BOOTSTRAP_DOWNLOAD_MODE}"
-  download_file "${asset_url}" "${tmp_zip}"
-  unzip -q "${tmp_zip}" -d "${tmp_extract}"
-
-  install -m 0755 "${tmp_extract}/mosdns" /usr/local/bin/mosdns
-  printf '{\n  "tag_name": "%s"\n}\n' "${release_tag}" > "${MOSDNS_DATA_DIR}/mosdns-x-release.json"
-  rm -rf "${tmp_dir}"
-}
-
-sync_easymosdns() {
-  local tag_name tarball_url tmp_dir src_dir extracted_root
-  tag_name="$(resolve_release_tag "${EASYMOSDNS_REPO}" "${EASYMOSDNS_REF}")"
-  tarball_url="$(release_archive_url "${EASYMOSDNS_REPO}" "${tag_name}")"
-
-  tmp_dir="$(mktemp -d)"
-  src_dir="${tmp_dir}/src"
-  mkdir -p "${src_dir}"
-
-  log "downloading ${EASYMOSDNS_REPO} ${EASYMOSDNS_REF} via ${BOOTSTRAP_DOWNLOAD_MODE}"
-  download_file "${tarball_url}" "${tmp_dir}/easymosdns.tar.gz"
-  tar -xzf "${tmp_dir}/easymosdns.tar.gz" -C "${src_dir}"
-  extracted_root="$(find "${src_dir}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 
   mkdir -p "${MOSDNS_WORKDIR}/rules"
-  cp -f "${extracted_root}/config.yaml" "${MOSDNS_WORKDIR}/config.yaml"
-  cp -f "${extracted_root}/hosts.txt" "${MOSDNS_WORKDIR}/hosts.txt"
-  cp -f "${extracted_root}/ecs_cn_domain.txt" "${MOSDNS_WORKDIR}/ecs_cn_domain.txt"
-  cp -f "${extracted_root}/ecs_noncn_domain.txt" "${MOSDNS_WORKDIR}/ecs_noncn_domain.txt"
-  cp -rf "${extracted_root}/rules/." "${MOSDNS_WORKDIR}/rules/"
+  cp -f "${EASYMOSDNS_TEMPLATE_DIR}/config.yaml" "${MOSDNS_WORKDIR}/config.yaml"
+  cp -f "${EASYMOSDNS_TEMPLATE_DIR}/hosts.txt" "${MOSDNS_WORKDIR}/hosts.txt"
+  cp -f "${EASYMOSDNS_TEMPLATE_DIR}/ecs_cn_domain.txt" "${MOSDNS_WORKDIR}/ecs_cn_domain.txt"
+  cp -f "${EASYMOSDNS_TEMPLATE_DIR}/ecs_noncn_domain.txt" "${MOSDNS_WORKDIR}/ecs_noncn_domain.txt"
+  cp -rf "${EASYMOSDNS_TEMPLATE_DIR}/rules/." "${MOSDNS_WORKDIR}/rules/"
 
-  printf '{\n  "tag_name": "%s"\n}\n' "${tag_name}" > "${MOSDNS_DATA_DIR}/easymosdns-release.json"
+  bundled_tag="$(read_json_tag_name /usr/local/share/easymosdns-release.json)"
   printf 'initialized_at=%s\n' "$(date -Iseconds)" > "$(marker_path)"
-  printf 'repo=%s\n' "${EASYMOSDNS_REPO}" >> "$(marker_path)"
-  printf 'ref=%s\n' "${EASYMOSDNS_REF}" >> "$(marker_path)"
-  printf 'tag=%s\n' "${tag_name}" >> "$(marker_path)"
-  rm -rf "${tmp_dir}"
+  printf 'source=bundled-template\n' >> "$(marker_path)"
+  printf 'tag=%s\n' "${bundled_tag:-unknown}" >> "$(marker_path)"
+}
+
+log_bundled_versions() {
+  local mosdns_x_tag easymosdns_tag
+  mosdns_x_tag="$(read_json_tag_name /usr/local/share/mosdns-x-release.json)"
+  easymosdns_tag="$(read_json_tag_name /usr/local/share/easymosdns-release.json)"
+  log "bundled mosdns-x: ${mosdns_x_tag:-unknown}"
+  log "bundled easymosdns: ${easymosdns_tag:-unknown}"
 }
 
 bootstrap() {
   mkdir -p "${MOSDNS_WORKDIR}" "${MOSDNS_DATA_DIR}"
-  install_mosdns_x
   if is_true "${FORCE_REINIT}"; then
     if is_true "${BACKUP_ON_REINIT}"; then
       backup_current_config
     fi
-    log "FORCE_REINIT is enabled, reinitializing easymosdns config"
-    sync_easymosdns
+    log "FORCE_REINIT is enabled, restoring bundled easymosdns template"
+    sync_bundled_easymosdns
   elif [[ -f "$(marker_path)" ]]; then
-    log "found init marker, skipping easymosdns bootstrap to avoid overwriting user config"
+    log "found init marker, skipping template bootstrap to avoid overwriting user config"
   else
-    sync_easymosdns
+    log "initializing config from bundled easymosdns template"
+    sync_bundled_easymosdns
   fi
 }
 
@@ -522,6 +315,7 @@ main() {
   case "${command}" in
     start)
       ensure_persistent_workdir
+      log_bundled_versions
       if [[ "${AUTO_UPDATE}" == "true" || "${AUTO_UPDATE}" == "1" ]]; then
         bootstrap
       elif [[ ! -x /usr/local/bin/mosdns || ! -f "${MOSDNS_WORKDIR}/${MOSDNS_CONFIG}" ]]; then
@@ -536,6 +330,7 @@ main() {
       ;;
     bootstrap)
       ensure_persistent_workdir
+      log_bundled_versions
       bootstrap
       ;;
     *)

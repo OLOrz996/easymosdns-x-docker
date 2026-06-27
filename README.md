@@ -11,7 +11,7 @@
 2. 后续保留用户自己修改过的配置
 3. 自动更新规则
 4. 提供本地健康检查
-5. 支持 GitHub Actions 自动校验构建，并在正式 tag 时推送到 Docker Hub
+5. 支持 GitHub Actions 定时检查上游版本，并在检测到新组合时推送到 Docker Hub
 6. 支持将 Docker Hub 短描述与完整说明从仓库自动同步过去
 
 ## 最小使用方式
@@ -26,7 +26,7 @@
 - `/etc/mosdns` 持久化
 - 首次启动自动初始化 `easymosdns`
 - 后续不覆盖用户配置
-- `mosdns-x` 与 `easymosdns` 默认通过 CDN 下载
+- `mosdns-x` 与 `easymosdns` 模板在镜像构建时内置
 - 每天凌晨 `03:00` 自动更新规则
 - 规则更新方式默认为 `cdn`
 - 自带本地 DNS 健康检查
@@ -81,7 +81,7 @@ volumes:
 启动逻辑如下：
 
 1. 如果 `/etc/mosdns` 没有持久化挂载，容器直接退出
-2. 如果标记文件不存在，就通过 CDN 下载官方 `easymosdns`
+2. 如果标记文件不存在，就从镜像内置模板初始化官方 `easymosdns`
 3. 写入 `config.yaml`、`hosts.txt`、`ecs_*.txt` 和 `rules/`
 4. 写入标记文件
 5. 后续启动如果标记文件存在，就跳过初始化，避免覆盖用户修改
@@ -117,31 +117,27 @@ RULES_UPDATE_MODE=direct
 RULES_UPDATE_MODE=none
 ```
 
-## 启动资源下载
+## 镜像内置资源
 
-容器在首次启动时会下载：
+镜像在构建阶段会直接打包：
 
 - `mosdns-x` 二进制
 - `easymosdns` 配置模板
 
-默认会通过 CDN 拉取这些 GitHub 资源，更适合国内网络环境。
+这样运行期不再依赖 GitHub、CDN 或现场网络来下载核心文件，容器首次启动只负责把内置模板初始化到 `/etc/mosdns`。
 
-当前启动下载不再依赖 `api.github.com`，而是直接使用 GitHub release/archive 地址，更适合国内网络环境。
-
-如果 `latest` 在当前网络环境下仍然不稳定，建议直接固定 `MOSDNS_X_REF` 和 `EASYMOSDNS_REF` 为明确的 release tag。
-
-如果你想改回直连，可以设置：
+如果你想固定上游版本，可以在构建镜像时传入：
 
 ```bash
-BOOTSTRAP_DOWNLOAD_MODE=direct
+docker build \
+  --build-arg MOSDNS_X_REF=v26.05.25 \
+  --build-arg EASYMOSDNS_REF=easymosdns-v3.5-2 \
+  -t easymosdns-x-docker:custom .
 ```
 
 ## 健康检查
 
-镜像内置了 `healthcheck`，逻辑分两层：
-
-1. 检查 `mosdns` 进程是否存在
-2. 对 `127.0.0.1:53` 发起一次 `localhost A` 查询，并要求返回 `127.0.0.1`
+镜像内置了 `healthcheck`，会对 `127.0.0.1:53` 发起一次 `localhost A` 查询，并要求返回非空结果。
 
 这样做的好处是：
 
@@ -160,13 +156,14 @@ BOOTSTRAP_DOWNLOAD_MODE=direct
 它会在以下场景自动运行：
 
 - push 到 `main`
-- push `v*` 标签
+- 每 6 小时定时检查一次上游版本
 - 手动触发 `workflow_dispatch`
 
 其中：
 
-- `main` 和手动触发默认只做构建校验，不推送 Docker Hub
-- 只有 `v*` 标签会正式推送镜像并同步 Docker Hub 描述
+- `main` 默认只做构建校验，不推送 Docker Hub
+- 定时任务和手动触发会检查 `mosdns-x` 与 `easymosdns` 的最新 release
+- 只有当新的三段版本组合尚未发布时，才会正式构建并推送镜像
 
 ### 最小配置
 
@@ -194,16 +191,30 @@ olorz/easymosdns-x-docker
 - 短描述：`dockerhub/short-description.txt`
 - 完整说明：仓库根目录 `README.md`
 
-### 推送标签策略
+### 镜像版本号
 
-正式发布时，workflow 会推送这些标签：
+镜像版本号由 3 部分组成：
 
-- `latest`
-  跟随最新正式版本更新
-- `vX.Y.Z`
-  例如推送 Git 标签 `v1.0.0` 时生成 `v1.0.0`
-- `X.Y`
-  例如推送 Git 标签 `v1.0.0` 时，同时生成 `1.0`
+1. 镜像自身版本号
+   来自仓库根目录 `IMAGE_VERSION`
+2. `mosdns-x` 版本号
+   来自上游最新 release tag
+3. `easymosdns` 版本号
+   来自上游最新 release tag
+
+组合后的 Docker Hub 标签格式为：
+
+```text
+<image-version>--<mosdns-x-version>--<easymosdns-version>
+```
+
+例如：
+
+```text
+0.2.0--v26.05.25--easymosdns-v3.5-2
+```
+
+此外仍会同步一个 `latest` 标签，指向当前最新成功发布的组合版本。
 
 ### 多架构
 
@@ -216,8 +227,9 @@ workflow 默认构建：
 
 workflow 会把“构建校验”和“正式发布”分开总结：
 
-- 非 tag 运行时，只显示校验构建成功，Docker Hub 推送会被跳过
-- tag 发布时，如果镜像推送成功，但描述同步失败
+- `main` 上只显示校验构建结果
+- 定时或手动发布时，会显示本次使用的三段版本组合
+- 如果镜像推送成功，但描述同步失败
 - Actions Summary 会明确提示是描述同步失败
 - job 也会在最后显式失败，方便第一时间发现问题
 
@@ -247,23 +259,11 @@ FORCE_REINIT=true
 `BACKUP_ON_REINIT`
 : 重初始化前是否自动备份
 
-`MOSDNS_X_REF`
-: 固定 `mosdns-x` 版本
-
-`EASYMOSDNS_REF`
-: 固定 `easymosdns` 版本
-
-`BOOTSTRAP_DOWNLOAD_MODE`
-: 控制 `mosdns-x` 与 `easymosdns` 下载方式，支持 `cdn` 或 `direct`
-
 `RULES_UPDATE_TIME`
 : 用每天固定时间更新规则，例如 `03:00`
 
 `RULES_UPDATE_INTERVAL`
 : 用固定间隔更新规则
-
-`GITHUB_TOKEN`
-: 在 `BOOTSTRAP_DOWNLOAD_MODE=direct` 时用于访问 GitHub，默认 CDN 模式不会使用它
 
 ## 运行示例
 
@@ -296,6 +296,7 @@ docker run -d \
 
 ## 注意事项
 
-- 当前镜像默认面向常见 Linux 架构自动选择 `mosdns-x` 二进制
+- 当前镜像会在构建时按目标架构内置对应的 `mosdns-x` 二进制
 - `RULES_UPDATE_CRON` 使用容器内 `TZ` 时区
 - `easymosdns` 初始化后，后续不会自动升级配置模板，除非显式开启 `FORCE_REINIT=true`
+- 如果你希望升级 `mosdns-x` 或 `easymosdns` 模板，需要重新构建并部署新镜像
