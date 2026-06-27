@@ -62,6 +62,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Update Docker Hub description
+        id: dockerhub_description
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -70,3 +72,27 @@ jobs:
           short-description: ${{ steps.dockerhub_short.outputs.value }}
           readme-filepath: ./dockerhub/README.md
           enable-url-completion: true
+
+      - name: Summarize Docker publish result
+        if: always()
+        run: |
+          {
+            echo "## Docker publish summary"
+            echo ""
+            echo "- Image push: success"
+            if [ "${{ steps.dockerhub_description.outcome }}" = "success" ]; then
+              echo "- Docker Hub description sync: success"
+            else
+              echo "- Docker Hub description sync: failed"
+              echo ""
+              echo "The image was pushed successfully, but Docker Hub short description/overview was not updated."
+              echo "Check the 'Update Docker Hub description' step for the exact error."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if Docker Hub description sync failed
+        if: steps.dockerhub_description.outcome != 'success'
+        run: |
+          echo "Docker image push succeeded, but Docker Hub description sync failed." >&2
+          echo "Check the 'Update Docker Hub description' step for details." >&2
+          exit 1
