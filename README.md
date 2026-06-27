@@ -143,25 +143,26 @@ RULES_UPDATE_MODE=none
 - push `v*` 标签
 - 手动触发 `workflow_dispatch`
 
-### 需要配置的 GitHub Secrets
+### 最小配置
 
-在 GitHub 仓库的 `Settings > Secrets and variables > Actions` 里添加：
+现在 workflow 已经改成最小配置版，镜像名直接写死为：
+
+```text
+olorz996/easymosdns-docker
+```
+
+所以 GitHub 仓库里只需要配置 2 个 `Repository secrets`：
 
 `DOCKERHUB_USERNAME`
 : Docker Hub 用户名
 
 `DOCKERHUB_TOKEN`
-: Docker Hub Access Token，建议不要直接用密码
+: Docker Hub Access Token
 
-### 需要配置的 GitHub Variables
+不再需要额外配置：
 
-同样在 GitHub 仓库里添加：
-
-`DOCKERHUB_NAMESPACE`
-: 例如 `olorz996`
-
-`DOCKERHUB_IMAGE`
-: 例如 `easymosdns-docker`
+- `DOCKERHUB_NAMESPACE`
+- `DOCKERHUB_IMAGE`
 
 ### 推送标签策略
 

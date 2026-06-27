@@ -35,7 +35,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ vars.DOCKERHUB_NAMESPACE }}/${{ vars.DOCKERHUB_IMAGE }}
+          images: olorz996/easymosdns-docker
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
